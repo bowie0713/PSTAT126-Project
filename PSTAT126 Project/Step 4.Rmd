@@ -1,0 +1,268 @@
+---
+title: "PSTAT 126 Project Step  4"
+author: "Carter Kulm, Ameya Deshpande, Bowie Chuang, Deanna Hu"
+date: "Spring 2024"
+output:
+  html_document: default
+  pdf_document: 
+    fig_crop: no
+---
+
+
+```{r setup, include=FALSE}
+# knit options
+knitr::opts_chunk$set(echo = F,
+                      results = 'markup',
+                      fig.width = 3.5,
+                      fig.height = 2.5,
+                      fig.align = 'center',
+                      message = F,
+                      warning = F)
+
+bfcolor <- function(x, color) {
+  if (knitr::is_latex_output()) {
+    sprintf("\\textcolor{%s}{\\textbf{%s}}", color, x)
+  } else if (knitr::is_html_output()) {
+    sprintf("<span style='color: %s;'><b>%s</b></span>", color, x)
+  } else x
+}
+library(tidyverse)
+library(ggplot2)
+library(corrplot)
+library(ggfortify)
+library(broom)
+library(GGally)
+library(modelr)
+library(ggpubr)
+library(leaps)
+library(MASS)
+library(ISLR)
+library(glmnet)
+```
+
+```{r results = 'hide'}
+set.seed(10)
+billionaires <- read.csv("/Users/bowiechuang/Downloads/Billionaires Statistics Dataset.csv")
+billionaires <- billionaires %>%
+  dplyr::select(country, finalWorth, age, cpi_country, gdp_country, gross_tertiary_education_enrollment, gross_primary_education_enrollment_country, life_expectancy_country, tax_revenue_country_country, population_country, total_tax_rate_country, gender) %>%
+  drop_na()
+
+billionaires <- billionaires[sample(nrow(billionaires), 500), ]
+billionaires <- rename(billionaires, 
+       tax_revenue_country = tax_revenue_country_country, 
+       tertiary_enrollment = gross_tertiary_education_enrollment, 
+       primary_enrollment = gross_primary_education_enrollment_country,
+       tax_rate_country = total_tax_rate_country)
+billionaires <- billionaires %>%
+  mutate(
+    gdp_country = gsub("\\$", "", gdp_country),
+    gdp_country = gsub("\\,", "", gdp_country),
+    gdp_country = as.numeric(gdp_country)
+  )
+```
+
+
+## Shrinkage Methods
+
+### Introduction
+
+The name of the data set that our group is using is the Billionaires Statistics data set, which we found on [Kaggle](https://www.kaggle.com/datasets/nelgiriyewithana/billionaires-statistics-dataset). The data was compiled from various sources, including Forbes and other financial publications, and primarily gives us information about the countries in which every billionaire in the world resides. 
+The population of interest to us are the countries in the world where the billionaires reside. We took a subset of 500 of these billionaires to form our data set, and the primary numeric variables of interest are shown below:
+
+| **`Name`** | **`Description`** |
+| - | - |
+| finalWorth | Net worth (USD) of billionaire (in millions) as of 2023 |
+| age | Age of billionaire as of 2023 |
+| cpi_country | The consumer price index (CPI) of the billionaire's country |
+| gdp_country | he gross domestic product (GDP) of the billionaire's country. |
+| tertiary_enrollment | Percent of eligible students enrolled in  (post-high school) education |
+| primary_enrollment | Percent of eligible students enrolled in primary education |
+| life_expectancy_country | Life expectancy of people in billionaire's country |
+| tax_revenue_country | Federal income tax rate (bracket) of billionaire's country |
+| tax_rate_country | Income tax rate for billionaire's country |
+| population_country | The population of billionaire's country |
+| gender | The gender of the billionaire |
+
+For the purposes of our models, life_expectancy_country will serve as the response variable. 
+
+### Ridge and Lasso Regression
+
+#### Ridge Regression
+
+```{r setting up data}
+x <- model.matrix(life_expectancy_country ~ log(cpi_country) +
+             log(population_country) +
+             tax_revenue_country + 
+             gdp_country + 
+             primary_enrollment +
+             tax_rate_country +
+             finalWorth, 
+             data = billionaires)[,-1]
+y <- billionaires$life_expectancy_country
+```
+
+```{r cross validation to choose tuning param, include = F}
+set.seed(1) 
+cv.out.ridge <- cv.glmnet(x, y, alpha = 0)
+plot(cv.out.ridge)
+abline(v = log(cv.out.ridge$lambda.min), col="red", lwd = 3, lty = 2)
+```
+
+```{r}
+bestlam <- cv.out.ridge$lambda.min
+paste("best lambda:", bestlam)
+```
+
+Above we see the value of the tuning parameter lambda by using cross-validation. Due to the relatively small nature of the tuning parameter value, our ridge regression will bear a similar resemblance to using the OLS estimator coefficients. 
+
+```{r coefficients of best model from ridge reg}
+ridge_mod <- glmnet(x, y, alpha = 0)
+predict(ridge_mod, type = "coefficients", s = bestlam)
+```
+
+Above we see the coefficients of each predictor in our model using the best lambda value as decided by ridge regression. We will compare these coefficients to the ones of the model that our group settled on in step 3, which are shown below:
+
+```{r}
+fit3 <- lm(life_expectancy_country ~ 
+             log(cpi_country) +
+             log(population_country) +
+             tax_revenue_country + 
+             gdp_country + 
+             primary_enrollment +
+             tax_rate_country +
+             finalWorth,
+           data = billionaires)
+fit3_summ <- summary(fit3)
+fit3$coefficients
+```
+
+Overall, the difference between the coefficients of our statistical model and the coefficients decided by ridge regression are not very different. Although, the differences in coefficients do get more noticeable as their strength to life expectancy weakens. 
+
+#### Lasso Regression
+
+```{r include = F}
+set.seed(1)
+cv.out.lasso <- cv.glmnet(x, y, alpha = 1)
+plot(cv.out.lasso)
+abline(v = log(cv.out.lasso$lambda.min), col="red", lwd = 3, lty = 2)
+```
+
+```{r}
+bestlam2 <- cv.out.lasso$lambda.min
+paste("best lambda: ", bestlam2)
+```
+
+Based on the value of the tuning parameter using lasso regression almost being 0, the coefficients of our parameters will be extremely close to the values of the OLS estimator coefficients. 
+
+```{r}
+lasso_mod <- glmnet(x, y, alpha = 1)
+predict(lasso_mod, type="coefficients", s = bestlam2)
+```
+
+As expected, the values of our lasso regression coefficients are extremely close to the values of the coefficients from our statistical model that is shown above in the ridge regression section. 
+
+### MLR, RR, Lasso Visualization
+
+```{r fig.width = 7, fig.height = 5}
+billionaires$mlr <- fit3$fitted.values
+billionaires$rr <- predict(ridge_mod, newx = x, s = bestlam)
+billionaires$lr <- predict(lasso_mod, newx = x, s = bestlam2)
+billionaires <- billionaires %>%
+  setNames(
+    nm = c("country", "finalWorth", "age", "cpi_country", "gdp_country", "tertiary_enrollment", "primary_enrollment", "life_expectancy_country", "tax_revenue_country", "population_country", "tax_rate_country", "gender", "mlr", "rr", "lr")
+  )
+billionaires %>%
+  pivot_longer(
+    cols = c(mlr, rr, lr),
+    names_to = "predict_type",
+    values_to = "prediction"
+  ) %>%
+  ggplot(
+    aes(
+      x = life_expectancy_country,
+      y = prediction,
+      color = predict_type
+    )
+  ) +
+  geom_point() +
+  theme_minimal() +
+  xlab("observed life expectancy")
+```
+
+As we can see above, there is a very strong association between the observed value of life expectancy and the predicted values. By no means is the association perfect, but one can observe a strong positive correlation from the graph. An additional note that should be made is the similarity of the multiple linear regression model's predictions and the lasso regression model's predictions, which almost cover each other up on the visualization. These two prediction values are usually separated from the ridge regression values, which seem to be consistently higher than the multiple linear and lasso regression predictions. 
+
+### Conclusion of Shrinkage Methods
+
+Our group was surprised at the discrepancy between the ridge regression predictions when compared to the lasso and multiple regression predictions. In the same vein, we were equally surprised at the near equality of lasso and multiple regression coefficients and subsequent predictions. If we were to delve deeper into the different regression methods, we would likely attempt to figure out what caused the similarities and differences between our three different models. 
+
+
+## Innovation: Box-Cox Transformation
+
+### Justification for Choice of Method
+
+```{r}
+par(mfrow = c(1, 2))
+autoplot(fit3, which = 1:2)
+```
+
+After running a basic Residual Plot and QQ-Plot on our chosen multiple linear regression model, we found out that our data is not normally distributed and does not follow homoscedasticity. As a result, we found out that it would effective if we can perform Box-Cox Transformation on the response variable of our regression model in order to stabilize our variance and make our data more normally distributed. By doing so, we believe that such transformation method can help improve our predictive model accuracy. 
+
+### Context/Theory
+
+Box-Cox Transformation is a method of transformation that transforms a non-normal response variable into a normal shape. The power of such transformation is to stabilize the variance and make sure the data are normally distributed in order to improve the fit of our linear regression model. 
+
+Box-Cox Transformation relies an exponent parameter $\ \lambda$, which usually varies from -5 to 5. This parameter is essential for us to find out the optimal value for transforming our response variable. The transform of response variable $\ Y$ has the following form:
+
+$$ \begin{equation}
+y(\lambda) = 
+\begin{cases} 
+\frac{y^{\lambda} - 1}{\lambda}, & \text{if } \lambda \neq 0; \\ 
+\log y, & \text{if } \lambda = 0.
+\end{cases}
+\end{equation} $$
+
+### Technical Limitaions
+
+One thing to note before conducting Box-Cox Transformation is that the response variable $\ Y$ should be strictly positive because this method is taking either logarithms or powers, which requires the value to be strictly positive. Since our response variable life_expectancy_country contains a strictly positive data, we have no issue conducting a box-cox transformation. 
+
+### Transformation and Analysis
+
+```{r}
+bc <- boxcox(fit3, lambda = seq(-3,3, 1/10))
+bc_optimal <- bc$x[which.max(bc$y)]
+
+billionaires_dummy <- billionaires
+
+if (bc_optimal == 0) {
+  billionaires_dummy$life_expectancy_country <- log(billionaires_dummy$life_expectancy_country)
+} else {
+  billionaires_dummy$life_expectancy_country <- (billionaires_dummy$life_expectancy_country^bc_optimal - 1) / bc_optimal
+}
+
+fit_new <- lm(life_expectancy_country ~ 
+             log(cpi_country) +
+             log(population_country) +
+             tax_revenue_country + 
+             gdp_country + 
+             primary_enrollment +
+             tax_rate_country +
+             finalWorth,
+           data = billionaires_dummy)
+new_result <- summary(fit_new)
+
+par(mfrow = c(1, 2))
+autoplot(fit_new, which = 1:2)
+```
+
+```{r}
+paste("old model's R^2: ", fit3_summ$adj.r.squared)
+paste("box-cox transformation R^2: ", new_result$adj.r.squared)
+```
+
+After conducting the Box-Cox Transformation, we found out that the transformation itself does not significantly improve our model as our adjusted $R^2$ value has only increase a slight 0.012. We believe that such result happened because the fit of the model does not improve significantly by solely transforming our response variable. It should also be stated that our previous model already had a very high adjusted $R^2$, so an increase of one percent is still somewhat notable considering the level of correlation at hand. 
+
+### Conclusion of Box-Cox Method
+
+After conducting the Box-Cox Transformation, we found out that the transformation itself does not significantly improve our model as our Adjusted R^2 value has only increase a slight 0.012. Since we did not violate any conditions when conducting Box-Cox Transformation, we believe that such result happened solely because the fit of our model were not significantly affected by only transforming  a single response variable. In other words, the transformation of response variable does not contribute much to the improvement of our model due to the nature of our chosen dataset. 
+
+
